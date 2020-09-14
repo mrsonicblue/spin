@@ -7,9 +7,12 @@
 #include <pthread.h>
 #include <ctype.h>
 #include <sys/time.h>
+#include <sys/types.h>
+#include <dirent.h>
 #include <math.h>
 #include <phidget22.h>
 
+#define NULL_ANGLE -999.0
 #define ACCELERATION 1.0
 #define SENSITIVITY_FULL 0.0
 #define SENSITIVITY_NONE 1.0
@@ -17,6 +20,12 @@
 #define VELOCITY2 0.1
 #define FILTER_DEPTH 5
 #define ERROR 0.0
+#define VERTICAL_ANGLE 94.5
+#define HORIZONTAL_ANGLE 2.9
+
+#define PROC_ROOT "/proc"
+#define COMMAND_LINE "/cmdline"
+#define MISTER_COMMAND "/media/fat/MiSTer"
 
 pthread_mutex_t _lock;
 PhidgetDCMotorHandle _motor;
@@ -35,6 +44,7 @@ double _targetRequest;
 double _target;
 struct timeval _timeout;
 struct timeval _halfSecond;
+char * _latestCore;
 
 void setAcceleratorSensitivity(double sensitivity)
 {
@@ -155,7 +165,7 @@ static void CCONV onAccelerometer_AccelerationChange(PhidgetAccelerometerHandle 
 	}
 
 	// Handle target request
-	if (_targetRequest != -999.0)
+	if (_targetRequest != NULL_ANGLE)
 	{
 		if (_target != _targetRequest)
 		{
@@ -167,7 +177,7 @@ static void CCONV onAccelerometer_AccelerationChange(PhidgetAccelerometerHandle 
 			_working = true;
 		}
 
-		_targetRequest = -999.0;
+		_targetRequest = NULL_ANGLE;
 	}
 
 	double relativeAngleWas = _relativeAngle;
@@ -237,24 +247,163 @@ static void CCONV onAccelerometer_AccelerationChange(PhidgetAccelerometerHandle 
 	pthread_mutex_unlock(&_lock);
 }
 
-void intHandler(int dummy)
+void parseCommand(char **commandBits, char *command)
 {
-    shutDown();
+	char *token = strtok(command, "\0");
+
+	int i;
+	for (i = 0; i < 3; i++)
+	{
+		if (token)
+		{
+			printf("HMM: %s\n", token);
+			commandBits[i] = token;
+			token = strtok(NULL, "\0");
+		}	
+		else
+		{
+			commandBits[1] = NULL;
+		}
+	}
 }
 
-int main(int argc, char *argv[])
+void readString(char *str, FILE *file, char terminator)
 {
-	double initialAngle = 0.0;
-	if (argc > 1)
-		initialAngle = atof(argv[1]);
+	int i = 0;
+	int c;
+	while (true)
+	{
+		c = fgetc(file);
+		if (c == EOF || c == terminator)
+			c = 0;
 
-	printf("Initial angle is %lf\n", initialAngle);
+		str[i] = (char)c;
+		if (str[i] == '\0')
+			return;
 
+		i++;
+	}
+}
+
+char *readCoreFromProcesses() 
+{
+	DIR *rootDirectory;
+    struct dirent *processDirectory;
+	char commandFilePath[100];
+	FILE *commandFile;
+	char command1[1000];
+	char command2[1000];
+	char command3[1000];
+
+    if ((rootDirectory = opendir(PROC_ROOT)) == NULL)
+	{
+        printf("ERROR: Cannot open process directory\n");
+        shutDown();
+    }
+
+	// Search for MiSTer process
+    while ((processDirectory = readdir(rootDirectory)))
+	{
+		// Ignore all but normal directories
+		if (processDirectory->d_type != DT_DIR)
+			continue;
+
+		// Ignore non-process directories
+		if (processDirectory->d_name[0] < '0' || processDirectory->d_name[0] > '9')
+			continue;
+
+		strcpy(commandFilePath, PROC_ROOT);
+		strcat(commandFilePath, "/");
+		strcat(commandFilePath, processDirectory->d_name);
+		strcat(commandFilePath, COMMAND_LINE);
+
+		if ((commandFile = fopen(commandFilePath, "r")) == NULL)
+			continue;
+		
+		readString(command1, commandFile, '\0');
+		readString(command2, commandFile, '\0');
+		readString(command3, commandFile, '\0');
+
+		fclose(commandFile);
+
+		if (strcmp(command1, MISTER_COMMAND) != 0)
+			continue;
+
+		int len = strlen(command2);
+		char *result = (char *)malloc(len * sizeof(char));
+		if (result == NULL)
+			continue;
+
+		strcpy(result, command2);
+		return result;
+	}
+
+	return NULL;
+}
+
+void checkCore()
+{
+	char *currentCore = readCoreFromProcesses();
+	if (currentCore != NULL)
+	{
+		if (_latestCore == NULL || strcmp(_latestCore, currentCore) != 0)
+		{
+			printf("Core changed!!!!!!!!!!!!\n");
+			printf("%s\n", currentCore);
+
+			if (_latestCore != NULL)
+				free(_latestCore);
+
+			_latestCore = currentCore;
+
+			double angle = (strcmp(currentCore, "/media/fat/_Arcade/cores/DonkeyKong_20200108.rbf") == 0)
+				? VERTICAL_ANGLE
+				: HORIZONTAL_ANGLE;
+			
+			turnTo(angle);
+		}
+	}
+}
+
+void signalHandler(int signal)
+{
+	switch (signal) {
+		case SIGTERM:
+		case SIGABRT:
+		case SIGQUIT:
+		case SIGINT:
+			shutDown();
+			break;
+		case SIGHUP:
+			// TODO: What to do in this case?
+			break;
+		case SIGSEGV:
+		case SIGILL:
+			// Display back trace.
+			exit(EXIT_FAILURE);
+			break;
+	}
+}
+
+void setupSignals()
+{
+	signal(SIGTERM, signalHandler);
+	signal(SIGQUIT, signalHandler);
+	signal(SIGABRT, signalHandler);
+	signal(SIGINT,  signalHandler);
+	signal(SIGCONT, SIG_IGN);
+	signal(SIGSTOP, SIG_IGN);
+	signal(SIGHUP,  signalHandler);	
+}
+
+bool initialize()
+{
+	// Initialize global variables
 	if (pthread_mutex_init(&_lock, NULL) != 0)
 	{ 
-        printf("mutex init has failed\n"); 
-        return 1;
-    } 
+        printf("ERROR: Mutex init failed\n"); 
+        return false;
+    }
 
 	_terminated = false;
 	_primed = false;
@@ -266,15 +415,19 @@ int main(int argc, char *argv[])
 	_zCoord = 0.0;
 	_absoluteAngle = 0.0;
 	_relativeAngle = 0.0;
-	_targetRequest = -999.0;
+	_targetRequest = NULL_ANGLE;
 	_target = -1.0;
 	_rotations = 0;
 	timerclear(&_timeout);
 	_halfSecond.tv_sec = 0;
 	_halfSecond.tv_usec = 500000;
+	_latestCore = NULL;
 
-	signal(SIGINT, intHandler);
+	return true;
+}
 
+void setupHardware()
+{
 	PhidgetDCMotor_create(&_motor);
 	Phidget_setOnAttachHandler((PhidgetHandle)_motor, onMotor_Attach, NULL);
 	Phidget_setOnDetachHandler((PhidgetHandle)_motor, onMotor_Detach, NULL);
@@ -291,19 +444,10 @@ int main(int argc, char *argv[])
 
 	Phidget_openWaitForAttachment((PhidgetHandle)_accelerometer, 500);
 	PhidgetAccelerometer_setDataInterval(_accelerometer, 16);
+}
 
-	turnTo(initialAngle);
-
-	while (!_terminated) 
-	{
-		printf("PING\n");
-
-		sleep(1);
-	}
-
-	printf("\n");
-	printf("Cleaning up!\n");
-
+void cleanupHardware()
+{
 	pthread_mutex_lock(&_lock);
 
 	PhidgetDCMotor_setTargetVelocity(_motor, 0.0);
@@ -316,8 +460,41 @@ int main(int argc, char *argv[])
 
 	pthread_mutex_unlock(&_lock);
 	pthread_mutex_destroy(&_lock);
+}
+
+int main(int argc, char *argv[])
+{
+	// // Read command line arguments
+	// double initialAngle = 0.0;
+	// if (argc > 1)
+	// 	initialAngle = atof(argv[1]);
+
+	// printf("Initial angle is %lf\n", initialAngle);
+
+	if (!initialize())
+		return 1;
+
+	setupSignals();
+	setupHardware();
+
+	// turnTo(initialAngle);
+
+	printf("Entering main loop...\n");
+	
+	while (!_terminated)
+	{
+		printf("PING\n");
+
+		checkCore();
+
+		sleep(1);
+	}
 
 	printf("\n");
+	printf("Cleaning up!\n");
+
+	cleanupHardware();
+
 	printf("All done!\n");
 
 	return 0;
