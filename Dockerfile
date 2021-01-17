@@ -37,7 +37,7 @@ RUN set -ex; \
     wget --no-verbose https://www.phidgets.com/downloads/phidget22/libraries/linux/libphidget22.tar.gz; \
     tar xfz libphidget22.tar.gz; \
     rm libphidget22.tar.gz; \
-    mv libphidget22-1.6.20200805 libphidget22; \
+    mv libphidget22-* libphidget22; \
     cd libphidget22; \
     ./configure --prefix=/build/gcc --host=arm-linux-gnueabihf --disable-shared; \
     make; \
