@@ -17,7 +17,7 @@
 #define SENSITIVITY_FULL 0.0
 #define SENSITIVITY_NONE 1.0
 #define VELOCITY1 0.4
-#define VELOCITY2 0.1
+#define VELOCITY2 0.2
 #define FILTER_DEPTH 5
 #define ERROR 0.0
 #define VERTICAL_ANGLE 94.5
@@ -356,7 +356,7 @@ void checkCore()
 
 			_latestCore = currentCore;
 
-			double angle = (strcmp(currentCore, "/media/fat/_Arcade/cores/DonkeyKong_20200108.rbf") == 0)
+			double angle = (strcmp(currentCore, "/media/fat/_Arcade/cores/Cave_20210115.rbf") == 0)
 				? VERTICAL_ANGLE
 				: HORIZONTAL_ANGLE;
 			
