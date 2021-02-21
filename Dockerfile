@@ -17,7 +17,8 @@ RUN set -ex; \
     rm gcc-linaro-6.5.0-2018.12-x86_64_arm-linux-gnueabihf.tar.xz; \
     mv gcc-linaro-6.5.0-2018.12-x86_64_arm-linux-gnueabihf gcc;
 
-ENV PATH="${PATH}:/build/gcc/bin"
+ENV ARCH=arm
+ENV CROSS_COMPILE=/build/gcc/bin/arm-linux-gnueabihf-
 
 # libusb
 RUN set -ex; \
