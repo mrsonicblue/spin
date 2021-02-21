@@ -367,7 +367,8 @@ void checkCore()
 
 void signalHandler(int signal)
 {
-	switch (signal) {
+	switch (signal)
+	{
 		case SIGTERM:
 		case SIGABRT:
 		case SIGQUIT:
